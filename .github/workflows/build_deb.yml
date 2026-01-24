@@ -96,7 +96,7 @@ jobs:
       - name: Get package info
         id: package
         run: |
-          DEB_FILE=$(find build-deb -name "*.deb" -type f)
+          DEB_FILE=$(find build-deb -maxdepth 1 -name "*.deb" -type f | head -1)
           DEB_NAME=$(basename "$DEB_FILE")
           DEB_SIZE=$(du -h "$DEB_FILE" | cut -f1)
           echo "file=$DEB_FILE" >> $GITHUB_OUTPUT
