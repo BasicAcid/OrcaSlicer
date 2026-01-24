@@ -1,0 +1,151 @@
+name: Build Debian Package
+
+on:
+  push:
+    branches:
+      - debian-packaging
+    tags:
+      - 'v*-deb*'
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - '**/CMakeLists.txt'
+      - 'version.inc'
+      - 'localization/**'
+      - 'resources/**'
+      - 'scripts/linux.d/debian'
+      - 'BUILD_DEB.md'
+      - '.github/workflows/build_deb.yml'
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-deb:
+    name: Build .deb Package
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Get version
+        id: version
+        run: |
+          ver=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          echo "version=$ver" >> $GITHUB_OUTPUT
+          echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "Building version: $ver"
+
+      - name: Cache dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: deps/build
+          key: deps-ubuntu24-${{ hashFiles('deps/**', 'deps_src/**') }}
+          restore-keys: |
+            deps-ubuntu24-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf build-essential cmake extra-cmake-modules file g++ gettext git \
+            libcurl4-openssl-dev libdbus-1-dev libglew-dev \
+            libgstreamer-plugins-base1.0-dev libgstreamerd-3-dev \
+            libgtk-3-dev libmspack-dev libsecret-1-dev libspnav-dev libssl-dev \
+            libtool libudev-dev libwayland-dev ninja-build texinfo wget \
+            libwebkit2gtk-4.1-dev
+
+      - name: Build dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          ./build_linux.sh -d
+
+      - name: Configure OrcaSlicer with FHS
+        run: |
+          cmake -S . -B build-deb \
+            -G "Ninja Multi-Config" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSLIC3R_FHS=ON \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DSLIC3R_PCH=ON \
+            -DORCA_TOOLS=ON \
+            -DDEP_BUILD_DIR="${PWD}/deps/build"
+
+      - name: Build OrcaSlicer
+        run: |
+          cmake --build build-deb --config Release --target OrcaSlicer
+
+      - name: Build translations
+        run: |
+          ./scripts/run_gettext.sh
+
+      - name: Generate .deb package
+        run: |
+          cd build-deb
+          cpack -G DEB -C Release
+          cd ..
+
+      - name: Get package info
+        id: package
+        run: |
+          DEB_FILE=$(find build-deb -name "*.deb" -type f)
+          DEB_NAME=$(basename "$DEB_FILE")
+          DEB_SIZE=$(du -h "$DEB_FILE" | cut -f1)
+          echo "file=$DEB_FILE" >> $GITHUB_OUTPUT
+          echo "name=$DEB_NAME" >> $GITHUB_OUTPUT
+          echo "size=$DEB_SIZE" >> $GITHUB_OUTPUT
+          echo "Package: $DEB_NAME ($DEB_SIZE)"
+          dpkg-deb --info "$DEB_FILE"
+
+      # Upload artifact for every build
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orcaslicer-${{ steps.version.outputs.version }}-debian-amd64
+          path: ${{ steps.package.outputs.file }}
+          retention-days: 90
+          if-no-files-found: error
+
+      # Create GitHub Release only for tags
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.file }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## OrcaSlicer Debian Package
+
+            **Version**: ${{ steps.version.outputs.version }}
+            **Built**: ${{ steps.version.outputs.date }}
+            **Platform**: Debian 13+ / Ubuntu 22.04+
+            **Architecture**: amd64
+            **Package Size**: ${{ steps.package.outputs.size }}
+
+            ### Installation
+
+            ```bash
+            sudo dpkg -i ${{ steps.package.outputs.name }}
+            sudo apt-get install -f  # If dependencies missing
+            ```
+
+            ### What's Included
+
+            - OrcaSlicer binary with full desktop integration
+            - All resources, profiles, and calibration files
+            - Multi-language support (20+ languages)
+            - FHS-compliant installation (/usr/bin, /usr/share)
+
+            See [BUILD_DEB.md](https://github.com/${{ github.repository }}/blob/debian-packaging/BUILD_DEB.md) for building from source.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
