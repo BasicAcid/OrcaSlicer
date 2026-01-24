@@ -935,7 +935,14 @@ else ()
     install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "${CMAKE_INSTALL_PREFIX}/resources")
 endif ()
 
-install(FILES ${CMAKE_SOURCE_DIR}/LICENSE.txt DESTINATION ".")
+# Install LICENSE file
+if(SLIC3R_FHS)
+    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE.txt
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}
+            RENAME copyright)
+else()
+    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE.txt DESTINATION ".")
+endif()
 configure_file(${LIBDIR}/dev-utils/platform/unix/fhs.hpp.in ${LIBDIR_BIN}/dev-utils/platform/unix/fhs.hpp)
 
 set (CPACK_PACKAGE_NAME "OrcaSlicer")
@@ -964,5 +971,69 @@ set(CPACK_CREATE_DESKTOP_LINKS "orca-slicer")
 set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also include in install command
 
 set(CPACK_WIX_UPGRADE_GUID "058245e8-20e0-4a95-9ab7-1acfe17ad511")
-set(CPACK_GENERATOR NSIS)
+
+# Platform-specific generator selection
+if(WIN32)
+    set(CPACK_GENERATOR NSIS)
+elseif(UNIX AND NOT APPLE)
+    # Linux DEB package configuration
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_DEBIAN_PACKAGE_NAME "orcaslicer")
+    set(CPACK_DEBIAN_FILE_NAME "orcaslicer_${SoftFever_VERSION}_amd64.deb")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "OrcaSlicer Community <orca@example.com>")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "graphics")
+    set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+    set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "OrcaSlicer - Open Source 3D Printer Slicer
+ OrcaSlicer is an open source slicer for FDM 3D printers.
+ It provides advanced features for slicing 3D models and generating
+ G-code for various 3D printers.")
+
+    # Auto-detect dependencies using shlibdeps
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+
+    # Additional runtime dependencies that might not be auto-detected
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libgtk-3-0, libwxgtk3.2-1t64")
+
+    # Package architecture
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+
+    # Post-install/remove scripts for updating desktop database and icon cache
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+        "${CMAKE_CURRENT_BINARY_DIR}/postinst;${CMAKE_CURRENT_BINARY_DIR}/postrm")
+
+    # Create post-install script
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/postinst" "#!/bin/sh
+set -e
+if [ \"$1\" = \"configure\" ]; then
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    fi
+fi
+exit 0
+")
+
+    # Create post-remove script
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/postrm" "#!/bin/sh
+set -e
+if [ \"$1\" = \"remove\" ] || [ \"$1\" = \"purge\" ]; then
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    fi
+fi
+exit 0
+")
+
+    # Make scripts executable
+    file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/postinst" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/postrm" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+else()
+    set(CPACK_GENERATOR NSIS)
+endif()
+
 include(CPack)
