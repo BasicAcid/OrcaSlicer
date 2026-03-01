@@ -48,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps/build
-          key: deps-ubuntu24-${{ hashFiles('deps/**', 'deps_src/**') }}
+          key: deps-ubuntu24-${{ hashFiles('deps/*.cmake', 'deps/CMakeLists.txt', 'deps_src/CMakeLists.txt') }}
           restore-keys: |
             deps-ubuntu24-
 
